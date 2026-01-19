@@ -15,8 +15,8 @@ from permissions import (
     revoke_permission, get_user_permissions, get_users_with_permission
 )
 
-PINK = discord.Color.from_rgb(236, 72, 153)
-PURPLE = discord.Color.from_rgb(139, 92, 246)
+# Terminal-style color (matches quork website)
+CYAN = discord.Color.from_rgb(0, 255, 209)
 
 
 async def get_quote_score(pool, quote_id: int) -> int:
@@ -29,21 +29,25 @@ async def get_quote_score(pool, quote_id: int) -> int:
 def create_quote_embed(quote_id: int, quote_text: str, author_name: str | None, date_str: str,
                        creator_name: str, creator_avatar: str | None,
                        color: discord.Color, score: int = 0, context: str | None = None) -> discord.Embed:
-    """Create a formatted quote embed."""
-    description_parts = []
+    """Create a formatted quote embed with terminal style."""
+    lines = []
+    lines.append(f"```ansi")
+    lines.append(f"\u001b[1;37m> \u001b[0;37m\"{quote_text}\"")
+    lines.append(f"```")
+
     if author_name:
-        description_parts.append(f"@ {author_name}")
+        lines.append(f"@**{author_name}**")
+
     if context:
-        description_parts.append(f"*{context}*")
+        lines.append(f"-# {context}")
 
     embed = discord.Embed(
-        title=f'**{quote_text}**',
-        description="\n".join(description_parts) if description_parts else "",
+        description="\n".join(lines),
         color=color,
     )
+
     score_str = f"+{score}" if score > 0 else str(score)
-    # Quote ID at the end for voting system to identify the quote
-    embed.set_footer(text=f"Votes: {score_str} | {date_str} by {creator_name} | #{quote_id}", icon_url=creator_avatar)
+    embed.set_footer(text=f"[{score_str}]  •  {date_str}  •  {creator_name}  •  #{quote_id}", icon_url=creator_avatar)
     return embed
 
 
@@ -84,7 +88,7 @@ def setup_quote_commands(bot):
 
             embed = create_quote_embed(
                 row['id'], quote, author, format_date(row["created_at"]),
-                interaction.user.display_name, interaction.user.display_avatar.url, PINK, 0, context
+                interaction.user.display_name, interaction.user.display_avatar.url, CYAN, 0, context
             )
             await send_ephemeral_temp(interaction, embed=embed)
         except asyncpg.UniqueViolationError:
@@ -114,7 +118,7 @@ def setup_quote_commands(bot):
 
             embed = create_quote_embed(
                 q["id"], q["quote_text"], q["author_name"], format_date(q["created_at"]),
-                creator_name, creator_avatar, PURPLE, score, q["context"]
+                creator_name, creator_avatar, CYAN, score, q["context"]
             )
             view = create_quote_view(q["id"])
             if view:
@@ -183,10 +187,10 @@ def setup_quote_commands(bot):
             await send_error(interaction, "An error occurred. Please try again.")
 
     @quote_group.command(name="remove", description="Remove a quote")
-    @app_commands.describe(search="Filter quotes by text, author, or context (optional)", author="Filter quotes by author (optional)")
+    @app_commands.describe(search="Filter quotes by text (optional)", author="Filter quotes by author (optional)", context="Filter quotes by context (optional)")
     @guild_only
     @requires_db(bot)
-    async def remove_quote(interaction: discord.Interaction, search: str | None = None, author: str | None = None):
+    async def remove_quote(interaction: discord.Interaction, search: str | None = None, author: str | None = None, context: str | None = None):
         await interaction.response.defer(ephemeral=True)
         try:
             can_remove_own, can_remove_all = await can_remove(bot.pool, interaction.guild_id, interaction.user.id)
@@ -202,15 +206,16 @@ def setup_quote_commands(bot):
                 params = [interaction.guild_id, interaction.user.id]
 
             if search:
-                p1 = len(params) + 1
-                p2 = len(params) + 2
-                p3 = len(params) + 3
-                query += f" AND (quote_text ILIKE ${p1} OR COALESCE(author_name, '') ILIKE ${p2} OR COALESCE(context, '') ILIKE ${p3})"
-                params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
+                query += f" AND quote_text ILIKE ${len(params) + 1}"
+                params.append(f"%{search}%")
 
             if author:
                 query += f" AND author_name ILIKE ${len(params) + 1}"
                 params.append(f"%{author}%")
+
+            if context:
+                query += f" AND context ILIKE ${len(params) + 1}"
+                params.append(f"%{context}%")
 
             query += " ORDER BY created_at DESC"
 
@@ -223,6 +228,8 @@ def setup_quote_commands(bot):
                     filters.append(f"text '{search}'")
                 if author:
                     filters.append(f"author '{author}'")
+                if context:
+                    filters.append(f"context '{context}'")
                 msg = f"No quotes matching {' and '.join(filters)}." if filters else "No quotes available to remove."
                 return await send_error(interaction, msg)
 
@@ -235,27 +242,29 @@ def setup_quote_commands(bot):
             await send_error(interaction, "An error occurred. Please try again.")
 
     @quote_group.command(name="find", description="Search for a quote and post it publicly")
-    @app_commands.describe(search="Text to search for in quotes or context (optional)", author="Author to search for (optional)")
+    @app_commands.describe(search="Text to search for in quotes (optional)", author="Author to search for (optional)", context="Context to search for (optional)")
     @guild_only
     @requires_db(bot)
-    async def find_quote(interaction: discord.Interaction, search: str | None = None, author: str | None = None):
+    async def find_quote(interaction: discord.Interaction, search: str | None = None, author: str | None = None, context: str | None = None):
         await interaction.response.defer(ephemeral=True)
-        if not search and not author:
-            return await send_error(interaction, "Please provide at least a search term or author.")
+        if not search and not author and not context:
+            return await send_error(interaction, "Please provide at least a search term, author, or context.")
 
         try:
             query = "SELECT id, quote_text, author_name, context, created_at, added_by_id FROM quotes WHERE guild_id=$1"
             params = [interaction.guild_id]
 
             if search:
-                p1 = len(params) + 1
-                p2 = len(params) + 2
-                query += f" AND (quote_text ILIKE ${p1} OR COALESCE(context, '') ILIKE ${p2})"
-                params.extend([f"%{search}%", f"%{search}%"])
+                query += f" AND quote_text ILIKE ${len(params) + 1}"
+                params.append(f"%{search}%")
 
             if author:
                 query += f" AND author_name ILIKE ${len(params) + 1}"
                 params.append(f"%{author}%")
+
+            if context:
+                query += f" AND context ILIKE ${len(params) + 1}"
+                params.append(f"%{context}%")
 
             query += " ORDER BY created_at DESC"
 
@@ -268,6 +277,8 @@ def setup_quote_commands(bot):
                     filters.append(f"text '{search}'")
                 if author:
                     filters.append(f"author '{author}'")
+                if context:
+                    filters.append(f"context '{context}'")
                 return await send_error(interaction, f"No quotes matching {' and '.join(filters)}.")
 
             view = FindView(rows, interaction.user.id, search, author, bot)
@@ -659,7 +670,7 @@ class FindView(QuoteListEmbed, PaginatedView):
         )
         embed = create_quote_embed(
             quote['id'], quote["quote_text"], quote["author_name"], format_date(quote["created_at"]),
-            creator_name, creator_avatar, PURPLE, score, quote.get("context")
+            creator_name, creator_avatar, CYAN, score, quote.get("context")
         )
         view = create_quote_view(quote['id'])
 
