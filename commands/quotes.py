@@ -401,8 +401,8 @@ def setup_quote_commands(bot):
             if not embed.footer or not embed.footer.text:
                 return
 
-            # Match quote ID at the end of footer: "... | #123"
-            match = re.search(r"\| #(\d+)$", embed.footer.text)
+             # Match quote ID at the end of footer: "... • #123"                       
+            match = re.search(r"#(\d+)$", embed.footer.text)
             if not match:
                 return
 
@@ -440,9 +440,9 @@ def setup_quote_commands(bot):
                         pass
 
                 new_score = await get_quote_score(bot.pool, quote_id)
-                # Update "Votes: X" in footer
-                new_footer = re.sub(r"Votes: [+\-]?\d+", f"Votes: {new_score:+d}", embed.footer.text)
-
+                # Update "[+X]" or "[-X]" or "[0]" in footer                          
+                score_str = f"+{new_score}" if new_score > 0 else str(new_score)                                                                        
+                new_footer = re.sub(r"\[[+\-]?\d+\]", f"[{score_str}]", embed.footer.text)  
                 embed.set_footer(text=new_footer, icon_url=embed.footer.icon_url)
                 await message.edit(embed=embed)
         except Exception as e:
