@@ -23,14 +23,23 @@ async def get_quotes(request: web.Request) -> web.Response:
         async with pool.acquire() as conn:
             if guild_id:
                 rows = await conn.fetch(
-                    """SELECT id, guild_id, author_name, quote_text, context, added_by_id, created_at
-                       FROM quotes WHERE guild_id = $1 ORDER BY created_at DESC""",
+                    """SELECT q.id, q.guild_id, q.author_name, q.quote_text, q.context, q.added_by_id, q.created_at,
+                              COALESCE(SUM(v.vote), 0)::INT AS votes
+                       FROM quotes q
+                       LEFT JOIN quote_votes v ON v.quote_id = q.id
+                       WHERE q.guild_id = $1
+                       GROUP BY q.id
+                       ORDER BY q.created_at DESC""",
                     int(guild_id)
                 )
             else:
                 rows = await conn.fetch(
-                    """SELECT id, guild_id, author_name, quote_text, context, added_by_id, created_at
-                       FROM quotes ORDER BY created_at DESC"""
+                    """SELECT q.id, q.guild_id, q.author_name, q.quote_text, q.context, q.added_by_id, q.created_at,
+                              COALESCE(SUM(v.vote), 0)::INT AS votes
+                       FROM quotes q
+                       LEFT JOIN quote_votes v ON v.quote_id = q.id
+                       GROUP BY q.id
+                       ORDER BY q.created_at DESC"""
                 )
 
         quotes = [
@@ -42,6 +51,7 @@ async def get_quotes(request: web.Request) -> web.Response:
                 'context': row['context'],
                 'added_by_id': str(row['added_by_id']) if row['added_by_id'] else None,
                 'created_at': row['created_at'].isoformat() if row['created_at'] else None,
+                'votes': row['votes'],
             }
             for row in rows
         ]
