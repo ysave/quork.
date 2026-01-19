@@ -6,12 +6,29 @@ from config import API_HOST, API_PORT
 
 def create_api_app(pool: asyncpg.Pool) -> web.Application:
     """Create and configure the API application."""
-    app = web.Application()
+    app = web.Application(middlewares=[cors_middleware])
     app['pool'] = pool
 
     app.router.add_get('/api/quotes', get_quotes)
 
     return app
+
+@web.middleware
+async def cors_middleware(request, handler):
+    # If OPTIONS request (preflight), return quick with headers
+    if request.method == "OPTIONS":
+        response = web.Response()
+    else:
+        # Process normal request
+        response = await handler(request)
+
+    # Add CORS headers to response
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    response.headers['Access-Control-Max-Age'] = '3600'
+
+    return response
 
 
 async def get_quotes(request: web.Request) -> web.Response:
